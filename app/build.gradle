@@ -27,4 +27,5 @@ dependencies {
     androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
     implementation 'com.google.android.gms:play-services-vision:11.4.0'
     implementation 'com.github.ptnplanet:Java-Naive-Bayes-Classifier:1.0.7'
+    implementation 'com.github.chrisbanes:PhotoView:2.1.3'
 }

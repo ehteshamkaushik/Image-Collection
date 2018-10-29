@@ -3,6 +3,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.os.AsyncTask;
 
@@ -48,6 +49,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.android.gms.vision.Frame;
 import com.google.android.gms.vision.face.Face;
@@ -71,6 +74,7 @@ public class ImageCapture extends AsyncTask<String, String, String> {
     private static FaceDetector detector;
     int imageCount = 1;
     private Semaphore mCameraOpenCloseLock = new Semaphore(1);
+    private final ReentrantLock lock = new ReentrantLock();
     public ImageCapture(Context context)
     {
         this.context = context;
@@ -176,8 +180,12 @@ public class ImageCapture extends AsyncTask<String, String, String> {
         @Override
         public void onImageAvailable(ImageReader reader) {
             Log.d(TAG, "ImageAvailable");
-            Image image = reader.acquireNextImage();
-            backgroundHandler.post(new ImageSaver(image, file));
+            try {
+                Image image = reader.acquireLatestImage();
+                backgroundHandler.post(new ImageSaver(image, file));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
             //backgroundHandlerLog.post(new ImageLogSaver(image));
         }
 
@@ -271,8 +279,11 @@ public class ImageCapture extends AsyncTask<String, String, String> {
     }
 
     public void takePicture() {
-        file = getOutputMediaFile();
+        //Using the lock.. Don't know if it's working
+        lock.lock();
         try {
+
+            file = getOutputMediaFile();
             if (null == mCameraDevice) {
                 showMessage("Camera is Null");
                 return;
@@ -297,6 +308,9 @@ public class ImageCapture extends AsyncTask<String, String, String> {
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
+        finally {
+            lock.unlock();
+        }
         Toast.makeText(context, "Captured " + imageCount, Toast.LENGTH_SHORT).show();
     }
 
@@ -310,7 +324,7 @@ public class ImageCapture extends AsyncTask<String, String, String> {
          * The file we save the image into.
          */
         private final File mFile;
-
+        private String content;
         public ImageSaver(Image image, File file) {
             mImage = image;
             mFile = file;
@@ -318,152 +332,23 @@ public class ImageCapture extends AsyncTask<String, String, String> {
 
         @Override
         public void run() {
-            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes);
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = 8;
-            Bitmap mbitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+            lock.lock();
             try {
+                ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.get(bytes);
+                BitmapFactory.Options options = new BitmapFactory.Options();
+                options.inSampleSize = 8;
+                Bitmap mbitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+                content = "\n\nParams for image " + imageCount +":";
                 scanFaces(mbitmap);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            FileOutputStream output = null;
-            try {
-                output = new FileOutputStream(mFile);
-                output.write(bytes);
-            } catch (IOException e) {
-                e.printStackTrace();
-            } finally {
-                mImage.close();
-                if (null != output) {
-                    try {
-                        output.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-
-        private void scanFaces(Bitmap bitmap) throws Exception {
-            if (detector.isOperational() && bitmap != null) {
-                showMessage("Inside Scan");
-                Bitmap editedBitmap = Bitmap.createBitmap(bitmap.getWidth(), bitmap
-                        .getHeight(), bitmap.getConfig());
-                float scale = context.getResources().getDisplayMetrics().density;
-                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-                paint.setColor(Color.rgb(255, 61, 61));
-                paint.setTextSize((int) (14 * scale));
-                paint.setShadowLayer(1f, 0f, 1f, Color.WHITE);
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(3f);
-                Canvas canvas = new Canvas(editedBitmap);
-                canvas.drawBitmap(bitmap, 0, 0, paint);
-
-                Frame frame = new Frame.Builder().setBitmap(editedBitmap).build();
-                SparseArray<Face> faces = detector.detect(frame);
-                Face face = faces.valueAt(0);
-                showMessage("ekhane");
-//                canvas.clipRect(
-//                        face.getPosition().x,
-//                        face.getPosition().y,
-//                        face.getPosition().x + face.getWidth(),
-//                        face.getPosition().y + face.getHeight());
-//                canvas.drawRect(
-//                        face.getPosition().x,
-//                        face.getPosition().y,
-//                        face.getPosition().x + face.getWidth(),
-//                        face.getPosition().y + face.getHeight(), paint);
-//
-//                for (Landmark landmark : face.getLandmarks()) {
-//                    int cx = (int) (landmark.getPosition().x);
-//                    int cy = (int) (landmark.getPosition().y);
-//                    canvas.drawCircle(cx, cy, 5, paint);
-//                    scanResults.setText(scanResults.getText()+String.valueOf(landmark.getType())+'\n');
-//                }
-
-
-                int x,y,h,w;
-                if(face.getPosition().x<0){
-                    x = 0;
-                    w = (int)(face.getWidth() + face.getPosition().x);
-                }
-                else{
-                    x = (int) face.getPosition().x;
-                    w = (int)face.getWidth();
-                }
-                if(face.getPosition().y<0){
-                    y = 0;
-                    h = (int)(face.getHeight() + face.getPosition().y);
-                }
-                else{
-                    y = (int) face.getPosition().y;
-                    h = (int) face.getHeight();
-                }
-                Bitmap nnew = Bitmap.createBitmap(editedBitmap, x,y,w, h);
-                Bitmap resized = Bitmap.createScaledBitmap(nnew, 300, 300, true);
-                Frame frame1 = new Frame.Builder().setBitmap(resized).build();
-                SparseArray<Face> faces1 = detector.detect(frame1);
-                float left_eye_x, right_eye_x, left_nose_x, right_nose_x, left_mouth_x, right_mouth_x;
-                float left_eye_y, right_eye_y, left_nose_y, right_nose_y, left_mouth_y, right_mouth_y;
-                left_eye_x = faces1.valueAt(0).getLandmarks().get(1).getPosition().x;
-                left_eye_y = faces1.valueAt(0).getLandmarks().get(1).getPosition().y;
-                right_eye_x = faces1.valueAt(0).getLandmarks().get(0).getPosition().x;
-                right_eye_y = faces1.valueAt(0).getLandmarks().get(0).getPosition().y;
-                left_mouth_x = faces1.valueAt(0).getLandmarks().get(5).getPosition().x;
-                left_mouth_y = faces1.valueAt(0).getLandmarks().get(5).getPosition().y;
-                right_mouth_x = faces1.valueAt(0).getLandmarks().get(6).getPosition().x;
-                right_mouth_y = faces1.valueAt(0).getLandmarks().get(6).getPosition().y;
-                left_nose_x = (faces1.valueAt(0).getLandmarks().get(2).getPosition().x+faces1.valueAt(0).getLandmarks().get(3).getPosition().x)/2;
-                left_nose_y = (faces1.valueAt(0).getLandmarks().get(2).getPosition().y+faces1.valueAt(0).getLandmarks().get(3).getPosition().y)/2;
-                right_nose_x = (faces1.valueAt(0).getLandmarks().get(2).getPosition().x+faces1.valueAt(0).getLandmarks().get(4).getPosition().x)/2;
-                right_nose_y = (faces1.valueAt(0).getLandmarks().get(2).getPosition().y+faces1.valueAt(0).getLandmarks().get(4).getPosition().y)/2;
-                float md1, md2, md3, md4, md5, md6;
-
-                md1 = (float)Math.sqrt(Math.pow((left_eye_x - left_mouth_x), 2) + Math.pow((left_eye_y - left_mouth_y), 2));
-                md5 = (float)Math.sqrt(Math.pow((left_eye_x - right_mouth_x), 2) + Math.pow((left_eye_y - right_mouth_y), 2));
-                md6 = (float)Math.sqrt(Math.pow((right_eye_x - left_mouth_x), 2) + Math.pow((right_eye_y - left_mouth_y), 2));
-                md2 = (float)Math.sqrt(Math.pow((right_eye_x - right_mouth_x), 2) + Math.pow((right_eye_y - right_mouth_y), 2));
-                md3 = (float)Math.sqrt(Math.pow((left_nose_x - left_mouth_x), 2) + Math.pow((left_nose_y - left_mouth_y), 2));
-                md4 = (float)Math.sqrt(Math.pow((right_nose_x - right_mouth_x), 2) + Math.pow((right_nose_y - right_mouth_y), 2));
-
-                showMessage("ekhane1");
-                md1 = md1 / (md5 + md6);
-                md2 = md2 / (md5 + md6);
-                md3 = md3 / (md5 + md6);
-                md4 = md4 / (md5 + md6);
-                md1 = (float) Math.floor(md1*1000)/1000;
-                md2 = (float) Math.floor(md2*1000)/1000;
-                md3 = (float) Math.floor(md3*1000)/1000;
-                md4 = (float) Math.floor(md4*1000)/1000;
-                ArrayList<Float> values = new ArrayList<>();
-                values.add(2*md1);
-                values.add(2*md2);
-                values.add(2*md3);
-                values.add(2*md4);
-                Collection<Float> features = values;
-
-//                scanResults.setText(scanResults.getText() + "md1: "+ String.valueOf(2*md1) + "\n");
-//                scanResults.setText(scanResults.getText() + "md2: "+ String.valueOf(2*md2) + "\n");
-//                scanResults.setText(scanResults.getText() + "md3: "+ String.valueOf(2*md3) + "\n");
-//                scanResults.setText(scanResults.getText() + "md4: "+ String.valueOf(2*md4) + "\n");
-//                scanResults.setText(scanResults.getText() + "\nPrediction: "+ readFileAndPredict(features) + "\n");
-
-                String content = "\n\nParams for image " + imageCount +":" +
-                        "\ndistanceParameter1 = "+ String.valueOf(2*md1) +
-                        "\ndistanceParameter2 = "+ String.valueOf(2*md2) +
-                        "\ndistanceParameter3 = "+ String.valueOf(2*md3) +
-                        "\ndistanceParameter4 = "+ String.valueOf(2*md4);
-                showMessage(content);
-
-
-                File file=new File(Environment.getExternalStorageDirectory()+"/dirr");
+                //Writing in the inageLog
+                File file=new File(Environment.getExternalStorageDirectory()+"/ImageCollector_Logs");
                 if(!file.isDirectory()){
                     file.mkdir();
                 }
-                file=new File(Environment.getExternalStorageDirectory()+"/dirr","ImageCollectorLog.txt");
+                file=new File(Environment.getExternalStorageDirectory()+"/ImageCollector_Logs","ImageParametersLog.txt");
+
                 if (!file.exists())
                 {
                     try {
@@ -491,8 +376,162 @@ public class ImageCapture extends AsyncTask<String, String, String> {
                 {
                     exception.printStackTrace();
                 }
+                FileOutputStream output = null;
+                try {
+                    output = new FileOutputStream(mFile);
+                    output.write(bytes);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    mImage.close();
+                    if (null != output) {
+                        try {
+                            output.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            } finally {
+                lock.unlock();
             }
-            else showMessage("Bitmap is Null");
+        }
+
+        private void scanFaces(Bitmap bitmap){
+            if (detector.isOperational() && bitmap != null) {
+                Matrix matrix = new Matrix();
+                matrix.postRotate(270);
+                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                showMessage("Inside Scan");
+                Bitmap editedBitmap = Bitmap.createBitmap(bitmap.getWidth(), bitmap
+                        .getHeight(), bitmap.getConfig());
+                Log.d("scan", "111");
+                float scale = context.getResources().getDisplayMetrics().density;
+                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                paint.setColor(Color.rgb(255, 61, 61));
+                paint.setTextSize((int) (14 * scale));
+                paint.setShadowLayer(1f, 0f, 1f, Color.WHITE);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(3f);
+                Log.d("scan", "222");
+                Canvas canvas = new Canvas(editedBitmap);
+                canvas.drawBitmap(bitmap, 0, 0, paint);
+                Log.d("scan", "333");
+
+                Face face = null;
+                try {
+                    Frame frame = new Frame.Builder().setBitmap(editedBitmap).build();
+                    SparseArray<Face> faces = detector.detect(frame);
+                    face = faces.valueAt(0);
+                } catch (Exception e) {
+                    content += "\nFace not recognized.\n";
+                    return;
+                }
+                showMessage("ekhane");
+                Log.d("scan", "444");
+//                canvas.clipRect(
+//                        face.getPosition().x,
+//                        face.getPosition().y,
+//                        face.getPosition().x + face.getWidth(),
+//                        face.getPosition().y + face.getHeight());
+//                canvas.drawRect(
+//                        face.getPosition().x,
+//                        face.getPosition().y,
+//                        face.getPosition().x + face.getWidth(),
+//                        face.getPosition().y + face.getHeight(), paint);
+//
+//                for (Landmark landmark : face.getLandmarks()) {
+//                    int cx = (int) (landmark.getPosition().x);
+//                    int cy = (int) (landmark.getPosition().y);
+//                    canvas.drawCircle(cx, cy, 5, paint);
+//                    scanResults.setText(scanResults.getText()+String.valueOf(landmark.getType())+'\n');
+//                }
+
+
+                int x, y, h, w;
+                if (face.getPosition().x < 0) {
+                    x = 0;
+                    w = (int) (face.getWidth() + face.getPosition().x);
+                } else {
+                    x = (int) face.getPosition().x;
+                    w = (int) face.getWidth();
+                }
+                if (face.getPosition().y < 0) {
+                    y = 0;
+                    h = (int) (face.getHeight() + face.getPosition().y);
+                } else {
+                    y = (int) face.getPosition().y;
+                    h = (int) face.getHeight();
+                }
+                Log.d("scan", "555");
+                Bitmap nnew = Bitmap.createBitmap(editedBitmap, x, y, w, h);
+                Bitmap resized = Bitmap.createScaledBitmap(nnew, 300, 300, true);
+                Frame frame1 = new Frame.Builder().setBitmap(resized).build();
+                SparseArray<Face> faces1 = detector.detect(frame1);
+                Log.d("scan", "666");
+                float left_eye_x, right_eye_x, left_nose_x, right_nose_x, left_mouth_x, right_mouth_x;
+                float left_eye_y, right_eye_y, left_nose_y, right_nose_y, left_mouth_y, right_mouth_y;
+                float md1 = 0.0f, md2 = 0.0f, md3 = 0.0f, md4 = 0.0f, md5, md6;
+                try {
+                    left_eye_x = faces1.valueAt(0).getLandmarks().get(1).getPosition().x;
+                    left_eye_y = faces1.valueAt(0).getLandmarks().get(1).getPosition().y;
+                    right_eye_x = faces1.valueAt(0).getLandmarks().get(0).getPosition().x;
+                    right_eye_y = faces1.valueAt(0).getLandmarks().get(0).getPosition().y;
+                    left_mouth_x = faces1.valueAt(0).getLandmarks().get(5).getPosition().x;
+                    left_mouth_y = faces1.valueAt(0).getLandmarks().get(5).getPosition().y;
+                    right_mouth_x = faces1.valueAt(0).getLandmarks().get(6).getPosition().x;
+                    right_mouth_y = faces1.valueAt(0).getLandmarks().get(6).getPosition().y;
+                    left_nose_x = (faces1.valueAt(0).getLandmarks().get(2).getPosition().x + faces1.valueAt(0).getLandmarks().get(3).getPosition().x) / 2;
+                    left_nose_y = (faces1.valueAt(0).getLandmarks().get(2).getPosition().y + faces1.valueAt(0).getLandmarks().get(3).getPosition().y) / 2;
+                    right_nose_x = (faces1.valueAt(0).getLandmarks().get(2).getPosition().x + faces1.valueAt(0).getLandmarks().get(4).getPosition().x) / 2;
+                    right_nose_y = (faces1.valueAt(0).getLandmarks().get(2).getPosition().y + faces1.valueAt(0).getLandmarks().get(4).getPosition().y) / 2;
+                    Log.d("scan", "777");
+                    md1 = (float) Math.sqrt(Math.pow((left_eye_x - left_mouth_x), 2) + Math.pow((left_eye_y - left_mouth_y), 2));
+                    md5 = (float) Math.sqrt(Math.pow((left_eye_x - right_mouth_x), 2) + Math.pow((left_eye_y - right_mouth_y), 2));
+                    md6 = (float) Math.sqrt(Math.pow((right_eye_x - left_mouth_x), 2) + Math.pow((right_eye_y - left_mouth_y), 2));
+                    md2 = (float) Math.sqrt(Math.pow((right_eye_x - right_mouth_x), 2) + Math.pow((right_eye_y - right_mouth_y), 2));
+                    md3 = (float) Math.sqrt(Math.pow((left_nose_x - left_mouth_x), 2) + Math.pow((left_nose_y - left_mouth_y), 2));
+                    md4 = (float) Math.sqrt(Math.pow((right_nose_x - right_mouth_x), 2) + Math.pow((right_nose_y - right_mouth_y), 2));
+                    md1 = md1 / (md5 + md6);
+                    md2 = md2 / (md5 + md6);
+                    md3 = md3 / (md5 + md6);
+                    md4 = md4 / (md5 + md6);
+                    md1 = (float) Math.floor(md1 * 1000) / 1000;
+                    md2 = (float) Math.floor(md2 * 1000) / 1000;
+                    md3 = (float) Math.floor(md3 * 1000) / 1000;
+                    md4 = (float) Math.floor(md4 * 1000) / 1000;
+                    ArrayList<Float> values = new ArrayList<>();
+                    values.add(2 * md1);
+                    values.add(2 * md2);
+                    values.add(2 * md3);
+                    values.add(2 * md4);
+                    Collection<Float> features = values;
+                    Log.d("scan", "888");
+                } catch (Exception e) {
+                    content += "\nUnable to recognize facial features properly\n";
+                    return;
+                }
+                content += "\ndistanceParameter1: " + String.valueOf(md1 * 2) +
+                        "\ndistanceParameter2: " + String.valueOf(md2 * 2) +
+                        "\ndistanceParameter3: " + String.valueOf(md3 * 2) +
+                        "\ndistanceParameter4: " + String.valueOf(md4 * 2);
+
+
+                showMessage("ekhane1");
+
+//                scanResults.setText(scanResults.getText() + "md1: "+ String.valueOf(2*md1) + "\n");
+//                scanResults.setText(scanResults.getText() + "md2: "+ String.valueOf(2*md2) + "\n");
+//                scanResults.setText(scanResults.getText() + "md3: "+ String.valueOf(2*md3) + "\n");
+//                scanResults.setText(scanResults.getText() + "md4: "+ String.valueOf(2*md4) + "\n");
+//                scanResults.setText(scanResults.getText() + "\nPrediction: "+ readFileAndPredict(features) + "\n");
+
+
+            }
+
+            else {
+                showMessage("Bitmap is Null");
+                content = "Null Image";
+            }
         }
     }
 
@@ -510,7 +549,7 @@ public class ImageCapture extends AsyncTask<String, String, String> {
         // To be safe, you should check that the SDCard is mounted
         // using Environment.getExternalStorageState() before doing this.
 
-        File mediaStorageDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Camera2Test");
+        File mediaStorageDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "ImageCollector_Pics");
 
         // This location works best if you want the created images to be shared
         // between applications and persist after your app has been uninstalled.
@@ -526,7 +565,12 @@ public class ImageCapture extends AsyncTask<String, String, String> {
         //String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
 
         File mediaFile;
-        mediaFile = new File(mediaStorageDir.getPath() + File.separator + "IMG_" + imageCount + ".jpg");
+        try {
+            mediaFile = new File(mediaStorageDir.getPath() + File.separator + "IMG_" + imageCount + ".jpg");
+        } catch (Exception e) {
+            Log.d("scan", "image e prob");
+            mediaFile = null;
+        }
         imageCount++;
 
         return mediaFile;

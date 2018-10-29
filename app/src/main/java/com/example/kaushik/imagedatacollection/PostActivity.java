@@ -14,6 +14,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.support.v4.app.ActivityCompat;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.Editable;
@@ -32,6 +33,8 @@ import android.widget.ListAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.github.chrisbanes.photoview.PhotoView;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -65,7 +68,6 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
     private Sensor senAccelerometer;
     float speed,accelationSquareRoot=0,accelationTotal=0;
 
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -80,6 +82,7 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
         final ImageButton isLikedImageButton = findViewById(R.id.isLikedImageButtonId);
         final TextView isLikedTextView = findViewById(R.id.isLikedTextViewId);
         final EditText commentEditText = findViewById(R.id.commentEditTextId);
+        final PhotoView photoView = findViewById(R.id.imageOpen);
         Button commentButton = findViewById(R.id.commentButtonId);
         final ListView commentListView = findViewById(R.id.commentListViewId);
         final int[] postNo = {1};
@@ -114,12 +117,15 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
             public void run() {
                 handler.post(new Runnable() {
                     public void run() {
-                        imageCapture.takePicture();
+                        if (postNo[0] < 15){
+                            imageCapture.takePicture();
+                        }
                         //Toast.makeText(PhotoTakingService.this, "Time", Toast.LENGTH_SHORT).show();
                     }
                 });
             }
         };
+
         Timer timer = new Timer();
         timer.schedule(timertask, 0, 2000);
 
@@ -132,8 +138,10 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
                 }
                 if (postNo[0] >= 15)
                 {
+                    imageCapture.closeCamera();
                     Intent intent1 = new Intent(PostActivity.this, MainActivity.class);
                     startActivity(intent1);
+
                 }
                 else
                 {
@@ -276,11 +284,11 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
                     //Toast.makeText(PostActivity.this, content, Toast.LENGTH_SHORT).show();
                     InputMethodManager imm = (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
                     imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
-                    File file=new File(Environment.getExternalStorageDirectory()+"/dirr");
+                    File file=new File(Environment.getExternalStorageDirectory()+"/ImageCollector_Logs");
                     if(!file.isDirectory()){
                         file.mkdir();
                     }
-                    file=new File(Environment.getExternalStorageDirectory()+"/dirr","CommentCollectorLog.txt");
+                    file=new File(Environment.getExternalStorageDirectory()+"/ImageCollector_Logs","CommentCollectorLog.txt");
                     if (!file.exists())
                     {
                         try {
@@ -322,6 +330,18 @@ public class PostActivity extends AppCompatActivity implements SensorEventListen
         final int postId = PostActivity.this.getResources().getIdentifier("post"+ postNo, "drawable", getPackageName());
         postImageView.setImageResource(postId);
         isLikedTextView.setText("You have not liked this post yet");
+        postImageView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                AlertDialog.Builder mBuilder = new AlertDialog.Builder(PostActivity.this);
+                View mView = getLayoutInflater().inflate(R.layout.activity_image, null);
+                PhotoView photoView = mView.findViewById(R.id.imageOpen);
+                photoView.setImageResource(postId);
+                mBuilder.setView(mView);
+                AlertDialog mDialog = mBuilder.create();
+                mDialog.show();
+            }
+        });
     }
 
     @Override
